@@ -4,13 +4,10 @@
 
 import './styles.scss';
 import React from 'react';
-import { useSelector } from 'react-redux';
-import { CombinedState } from 'reducers';
 import Layout from 'antd/lib/layout';
 import { Col, Row } from 'antd/lib/grid';
-import Title from 'antd/lib/typography/Title';
-import CVATLogo from 'components/common/cvat-logo';
 import SVGSigningBackground from '../../assets/signing-background.svg';
+import RevAeroLogo from '../../assets/revaero-logo.png';
 
 interface SignInLayoutComponentProps {
     children: JSX.Element | JSX.Element[];
@@ -52,16 +49,7 @@ export const formSizes: FormSizes = {
 function SignInLayout(props: SignInLayoutComponentProps): JSX.Element {
     const { children } = props;
     const { Content, Header } = Layout;
-    const subtitle = useSelector((state: CombinedState) => state.about.server.subtitle);
 
-    const titleSizes = {
-        xs: { span: 0 },
-        sm: { span: 0 },
-        md: { span: 0 },
-        lg: { span: 0 },
-        xl: { span: 8 },
-        xxl: { span: 10 },
-    };
     const logoSizes = {
         xs: { span: 21 },
         sm: { span: 21 },
@@ -76,16 +64,13 @@ function SignInLayout(props: SignInLayoutComponentProps): JSX.Element {
             <Header className='cvat-signing-header'>
                 <Row className='cvat-signing-header-logo-wrapper' justify='center' align='middle'>
                     <Col {...logoSizes}>
-                        <CVATLogo />
+                        <img src={RevAeroLogo} alt='RevAero' style={{ maxHeight: 40 }} />
                     </Col>
                 </Row>
             </Header>
             <Layout className='cvat-signing-layout'>
                 <Content>
                     <Row justify='center' align='middle' style={{ height: '100%' }}>
-                        <Col {...titleSizes} className='cvat-signing-title'>
-                            <Title>{subtitle}</Title>
-                        </Col>
                         {children}
                     </Row>
                 </Content>
