@@ -16,6 +16,7 @@ import {
 import { RemoveFilteredShapes } from './remove-filtered-shapes';
 import { PropagateShapes } from './propagate-shapes';
 import { PolySimplify } from './poly-simplify';
+import { DetectionsToTracks } from './detections-to-tracks';
 
 const registeredActions: BaseAction[] = [];
 
@@ -48,6 +49,7 @@ export async function unregisterAction(action: BaseAction): Promise<void> {
 registerAction(new RemoveFilteredShapes());
 registerAction(new PropagateShapes());
 registerAction(new PolySimplify());
+registerAction(new DetectionsToTracks());
 
 export async function runAction(
     instance: Job | Task,
