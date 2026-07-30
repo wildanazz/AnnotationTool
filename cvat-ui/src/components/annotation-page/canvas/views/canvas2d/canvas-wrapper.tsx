@@ -35,6 +35,7 @@ import {
     resetCanvas,
     updateActiveControl as updateActiveControlAction,
     updateAnnotationsAsync,
+    translateAnnotationsAsync,
     createAnnotationsAsync,
     mergeAnnotationsAsync,
     groupAnnotationsAsync,
@@ -134,6 +135,7 @@ interface DispatchToProps {
     onResetCanvas: () => void;
     updateActiveControl: (activeControl: ActiveControl) => void;
     onUpdateAnnotations(states: ObjectState[]): void;
+    onTranslateAnnotations(frame: number, states: ObjectState[], offset: { x: number; y: number }): void;
     onCreateAnnotations(states: ObjectState[], source?: AnnotationSource): void;
     onMergeAnnotations(states: ObjectState[]): void;
     onSplitAnnotations(state: ObjectState): void;
@@ -290,6 +292,12 @@ const componentShortcuts = {
         sequences: [],
         scope: ShortcutScope.STANDARD_WORKSPACE,
     },
+    SELECT_ALL_SHAPES: {
+        name: 'Select all shapes',
+        description: 'Add every movable bounding box on the frame to the multi-selection (Ctrl + click selects individually)',
+        sequences: ['ctrl+shift+a'],
+        scope: ShortcutScope.STANDARD_WORKSPACE,
+    },
     NEXT_OBJECT: {
         name: 'Next object',
         description: 'Go to the next object and center it on the canvas',
@@ -319,6 +327,9 @@ function mapDispatchToProps(dispatch: any): DispatchToProps {
         },
         onUpdateAnnotations(states: ObjectState[]): void {
             dispatch(updateAnnotationsAsync(states));
+        },
+        onTranslateAnnotations(frame: number, states: ObjectState[], offset: { x: number; y: number }): void {
+            dispatch(translateAnnotationsAsync(frame, states, offset));
         },
         onCreateAnnotations(
             states: ObjectState[],
@@ -654,6 +665,7 @@ class CanvasWrapperComponent extends React.PureComponent<Props> {
         canvasInstance.html().removeEventListener('canvas.zoom', this.onCanvasZoomChanged);
         canvasInstance.html().removeEventListener('canvas.fit', this.onCanvasImageFitted);
         canvasInstance.html().removeEventListener('canvas.dragshape', this.onCanvasShapeDragged as EventListener);
+        canvasInstance.html().removeEventListener('canvas.dragshapes', this.onCanvasShapesDragged as EventListener);
         canvasInstance.html().removeEventListener('canvas.resizeshape', this.onCanvasShapeResized as EventListener);
         canvasInstance.html().removeEventListener('canvas.clicked', this.onCanvasShapeClicked);
         canvasInstance.html().removeEventListener('canvas.drawn', this.onCanvasShapeDrawn);
@@ -836,6 +848,18 @@ class CanvasWrapperComponent extends React.PureComponent<Props> {
             EventScope.dragObject,
             { duration, ...(serverID ? { obj_id: serverID } : {}) },
         );
+    };
+
+    // a bunch of bounding boxes selected on the canvas has been moved together
+    // all of them are shifted at once, so that the move is a single item in the annotations history
+    private onCanvasShapesDragged = (
+        e: CustomEvent<{ duration: number; states: ObjectState[]; offset: { x: number; y: number } }>,
+    ): void => {
+        const { jobInstance, frame, onTranslateAnnotations } = this.props;
+        const { detail: { duration, states, offset } } = e;
+
+        jobInstance.logger.log(EventScope.dragObject, { duration, count: states.length });
+        onTranslateAnnotations(frame, states, offset);
     };
 
     private onCanvasShapeResized = (e: CustomEvent<{ duration: number; state: ObjectState }>): void => {
@@ -1133,6 +1157,7 @@ class CanvasWrapperComponent extends React.PureComponent<Props> {
         canvasInstance.html().addEventListener('canvas.zoom', this.onCanvasZoomChanged);
         canvasInstance.html().addEventListener('canvas.fit', this.onCanvasImageFitted);
         canvasInstance.html().addEventListener('canvas.dragshape', this.onCanvasShapeDragged as EventListener);
+        canvasInstance.html().addEventListener('canvas.dragshapes', this.onCanvasShapesDragged as EventListener);
         canvasInstance.html().addEventListener('canvas.resizeshape', this.onCanvasShapeResized as EventListener);
         canvasInstance.html().addEventListener('canvas.clicked', this.onCanvasShapeClicked);
         canvasInstance.html().addEventListener('canvas.drawn', this.onCanvasShapeDrawn);
@@ -1158,6 +1183,7 @@ class CanvasWrapperComponent extends React.PureComponent<Props> {
             canvasIsReady,
             annotations,
             activatedStateID,
+            activeControl,
             focusedObjectPadding,
             onSwitchAutomaticBordering,
             onSwitchSnapToPoint,
@@ -1200,6 +1226,21 @@ class CanvasWrapperComponent extends React.PureComponent<Props> {
             SWITCH_AUTOMATIC_BORDERING: (event: KeyboardEvent | undefined) => {
                 preventDefault(event);
                 onSwitchAutomaticBordering(!automaticBordering);
+            },
+            SELECT_ALL_SHAPES: (event: KeyboardEvent | undefined) => {
+                preventDefault(event);
+                // only in the plain cursor mode, so it does not interfere with drawing/editing/grouping
+                if (activeControl !== ActiveControl.CURSOR) {
+                    return;
+                }
+
+                // pass every object on the frame; the canvas keeps only the ones it can group-move
+                // (unlocked, non-hidden rectangles), so the eligibility rule stays in one place
+                canvasInstance.selectObjects(
+                    annotations
+                        .map((state: ObjectState): number => state.clientID)
+                        .filter((clientID: number | null): clientID is number => Number.isInteger(clientID)),
+                );
             },
             SWITCH_SNAP_TO_POINT: (event: KeyboardEvent | undefined) => {
                 preventDefault(event);

@@ -31,6 +31,7 @@ export interface CanvasController {
     readonly focusData: FocusData;
     readonly activeElement: ActiveElement;
     readonly highlightedElements: HighlightedElements;
+    readonly selectedElements: number[];
     readonly drawData: DrawData;
     readonly editData: MasksEditData | PolyEditData;
     readonly interactionData: InteractionData;
@@ -47,6 +48,7 @@ export interface CanvasController {
     zoom(x: number, y: number, deltaY: number): void;
     draw(drawData: DrawData): void;
     edit(editData: MasksEditData | PolyEditData): void;
+    selectObjects(clientIDs: number[]): void;
     enableDrag(x: number, y: number): void;
     drag(x: number, y: number): void;
     disableDrag(): void;
@@ -103,6 +105,10 @@ export class CanvasControllerImpl implements CanvasController {
         this.model.edit(editData);
     }
 
+    public selectObjects(clientIDs: number[]): void {
+        this.model.selectObjects(clientIDs);
+    }
+
     public focus(clientID: number, padding: number): void {
         this.model.focus(clientID, padding);
     }
@@ -137,6 +143,10 @@ export class CanvasControllerImpl implements CanvasController {
 
     public get highlightedElements(): HighlightedElements {
         return this.model.highlightedElements;
+    }
+
+    public get selectedElements(): number[] {
+        return this.model.selectedElements;
     }
 
     public get drawData(): DrawData {

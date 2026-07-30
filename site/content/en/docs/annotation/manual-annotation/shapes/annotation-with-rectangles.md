@@ -19,6 +19,25 @@ hold `shift`. In the process of rotation, you can see the angle of rotation.
 
 ![Annotation with rectangle shape and highlighted rotation point](/images/image230.jpg)
 
+## Moving several rectangles at once
+
+Hold `Ctrl` and click rectangles to add them to a selection, selected rectangles are
+outlined with a dashed blue border. `Ctrl` + click a selected rectangle again to remove it
+from the selection, and click anywhere aside of the objects to reset the selection completely.
+To select every movable rectangle on the frame at once, press `Ctrl+Shift+A`
+(the shortcut is configurable in the settings).
+
+Once at least two rectangles are selected, dragging any of them moves the whole selection
+by the same offset. The move is written to the annotations history as a single action,
+so one `Ctrl+Z` returns every rectangle back.
+
+Pressing the delete object shortcut (`Del` by default, `Shift+Del` to also remove locked
+objects) while a selection exists removes every selected rectangle at once, again as a
+single history action.
+
+Locked, hidden and non-rectangular objects are not included into such a selection,
+and the selection is reset when you switch to another frame.
+
 ## Annotation with rectangle by 4 points
 
 It is an efficient method of bounding box annotation, proposed

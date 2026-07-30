@@ -209,6 +209,7 @@ export enum UpdateReasons {
     SHAPE_ACTIVATED = 'shape_activated',
     SHAPE_FOCUSED = 'shape_focused',
     SHAPE_HIGHLIGHTED = 'shape_highlighted',
+    SHAPES_SELECTED = 'shapes_selected',
 
     FITTED_CANVAS = 'fitted_canvas',
 
@@ -259,6 +260,7 @@ export interface CanvasModel {
     readonly focusData: FocusData;
     readonly activeElement: ActiveElement;
     readonly highlightedElements: HighlightedElements;
+    readonly selectedElements: number[];
     readonly drawData: DrawData;
     readonly editData: MasksEditData | PolyEditData;
     readonly interactionData: InteractionData;
@@ -280,6 +282,7 @@ export interface CanvasModel {
     setupIssueRegions(issueRegions: Record<number, { hidden: boolean; points: number[] }>): void;
     activate(clientID: number | null, attributeID: number | null): void;
     highlight(clientIDs: number[], severity: HighlightSeverity): void;
+    selectObjects(clientIDs: number[]): void;
     rotate(rotationAngle: number): void;
     focus(clientID: number, padding: number): void;
     fit(): void;
@@ -308,6 +311,8 @@ export interface CanvasModel {
 }
 
 const defaultData = {
+    // multi-selection is dropped together with any other pending canvas action
+    selectedElements: [] as number[],
     drawData: {
         enabled: false,
     },
@@ -333,6 +338,19 @@ const defaultData = {
         enabled: false,
     },
 };
+
+// Multi-selection is only meant for moving a bunch of bounding boxes together.
+// Other shape types are kept out of it: their geometry (masks, skeletons, cuboid projections)
+// can not be shifted by a plain translation of the drawn view
+function isSelectableForGroupMove(state: any, configuration: Configuration): boolean {
+    return state.shapeType === 'rectangle' &&
+        !state.lock &&
+        !state.pinned &&
+        !state.hidden &&
+        !state.outside &&
+        !state.isGroundTruth &&
+        !configuration.forceDisableEditing;
+}
 
 function hasShapeIsBeingDrawn(): boolean {
     const [element] = window.document.getElementsByClassName('cvat_canvas_shape_drawing');
@@ -361,6 +379,7 @@ export class CanvasModelImpl extends MasterImpl implements CanvasModel {
     private data: {
         activeElement: ActiveElement;
         highlightedElements: HighlightedElements;
+        selectedElements: number[];
         angle: number;
         canvasSize: Size;
         configuration: Configuration;
@@ -571,7 +590,16 @@ export class CanvasModelImpl extends MasterImpl implements CanvasModel {
             if ([Mode.EDIT, Mode.DRAG, Mode.RESIZE].includes(this.data.mode)) {
                 throw Error(`Canvas is busy. Action: ${this.data.mode}`);
             }
+
+            // a multi-selection never survives a frame change
+            this.data.selectedElements = [];
         }
+
+        // objects may have been removed, locked, hidden, etc. since the selection was made
+        this.data.selectedElements = this.data.selectedElements.filter((clientID: number): boolean => {
+            const state = objectStates.find((_state: any): boolean => _state.clientID === clientID);
+            return !!state && isSelectableForGroupMove(state, this.data.configuration);
+        });
         if (frameData.number === this.data.imageID &&
             frameData.deleted === this.data.imageIsDeleted &&
             !this.data.configuration.forceFrameUpdate
@@ -698,6 +726,25 @@ export class CanvasModelImpl extends MasterImpl implements CanvasModel {
         };
 
         this.notify(UpdateReasons.SHAPE_HIGHLIGHTED);
+    }
+
+    public selectObjects(clientIDs: number[]): void {
+        const selectedElements = Array.from(new Set(clientIDs))
+            .filter((clientID: number): boolean => {
+                const state = this.data.objects
+                    .find((_state: any): boolean => _state.clientID === clientID);
+                return !!state && isSelectableForGroupMove(state, this.data.configuration);
+            });
+
+        const { selectedElements: previous } = this.data;
+        if (previous.length === selectedElements.length &&
+            previous.every((clientID: number): boolean => selectedElements.includes(clientID))
+        ) {
+            return;
+        }
+
+        this.data.selectedElements = selectedElements;
+        this.notify(UpdateReasons.SHAPES_SELECTED);
     }
 
     public rotate(rotationAngle: number): void {
@@ -1132,6 +1179,10 @@ export class CanvasModelImpl extends MasterImpl implements CanvasModel {
 
     public get highlightedElements(): HighlightedElements {
         return { ...this.data.highlightedElements };
+    }
+
+    public get selectedElements(): number[] {
+        return [...this.data.selectedElements];
     }
 
     public get drawData(): DrawData {

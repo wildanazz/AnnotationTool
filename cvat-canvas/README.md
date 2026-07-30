@@ -23,6 +23,7 @@ For API methods, their arguments and return types, please look at ``canvas.ts``.
 - All drawn objects (shapes, tracks) have an id `cvat_canvas_shape_{objectState.clientID}`
 - Drawn shapes and tracks have classes `cvat_canvas_shape`,
   `cvat_canvas_shape_activated`,
+  `cvat_canvas_shape_selected`,
   `cvat_canvas_shape_selection`,
   `cvat_canvas_shape_merging`,
   `cvat_canvas_shape_drawing`,
@@ -65,6 +66,8 @@ Standard JS events are used.
     - canvas.fit
     - canvas.regionselected => {points: number[]}
     - canvas.dragshape => {duration: number, state: ObjectState}
+    - canvas.dragshapes => {duration: number, states: ObjectState[], offset: {x: number, y: number}}
+    - canvas.selected => {states: ObjectState[]}
     - canvas.roiselected => {points: number[]}
     - canvas.resizeshape => {duration: number, state: ObjectState}
     - canvas.contextmenu => { mouseEvent: MouseEvent, objectState: ObjectState,  pointID: number }
@@ -104,6 +107,7 @@ canvas.draw({
 | -------------- | ---- | ----- | ----- | ---- | ----- | ---- | ---- | ------ | ----------- | ----------- | -------- | ---- | ----- | ------------- |
 | setup()        | +    | +     | +     | +/-  | +     | +/-  | +/-  | +/-    | +           | +           | +        | +    | +     | +             |
 | activate()     | +    | -     | -     | -    | -     | -    | -    | -      | -           | -           | -        | -    | -     | -             |
+| selectObjects()| +    | +     | +     | +    | +     | +    | +    | +      | +           | +           | +        | +    | +     | +             |
 | rotate()       | +    | +     | +     | +    | +     | +    | +    | +      | +           | +           | +        | +    | +     | +             |
 | focus()        | +    | +     | +     | +    | +     | +    | +    | +      | +           | +           | +        | +    | +     | +             |
 | fit()          | +    | +     | +     | +    | +     | +    | +    | +      | +           | +           | +        | +    | +     | +             |

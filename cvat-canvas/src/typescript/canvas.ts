@@ -26,6 +26,7 @@ interface Canvas {
     translateFromSVG(points: number[]): number[];
     setupConflictRegions(clientID: number): number[];
     activate(clientID: number | null, attributeID?: number): void;
+    selectObjects(clientIDs: number[]): void;
     highlight(clientIDs: number[] | null, severity: HighlightSeverity | null): void;
     rotate(rotationAngle: number): void;
     focus(clientID: number, padding?: number): void;
@@ -55,6 +56,7 @@ interface Canvas {
     destroy(): void;
 
     readonly geometry: Geometry;
+    readonly selectedObjects: number[];
 }
 
 class CanvasImpl implements Canvas {
@@ -110,6 +112,10 @@ class CanvasImpl implements Canvas {
 
     public activate(clientID: number | null, attributeID: number | null = null): void {
         this.model.activate(clientID, attributeID);
+    }
+
+    public selectObjects(clientIDs: number[]): void {
+        this.model.selectObjects(clientIDs);
     }
 
     public highlight(clientIDs: number[], severity: HighlightSeverity | null = null): void {
@@ -186,6 +192,10 @@ class CanvasImpl implements Canvas {
 
     public get geometry(): Geometry {
         return this.model.geometry;
+    }
+
+    public get selectedObjects(): number[] {
+        return this.model.selectedElements;
     }
 
     public destroy(): void {

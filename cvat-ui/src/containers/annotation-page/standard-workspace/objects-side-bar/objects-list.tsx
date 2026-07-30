@@ -18,6 +18,7 @@ import {
     switchPropagateVisibility as switchPropagateVisibilityAction,
     switchSimplifyVisibility as switchSimplifyVisibilityAction,
     removeObject as removeObjectAction,
+    removeObjectsAsync,
     fetchAnnotationsAsync,
     changeHideActiveObjectAsync,
     updateLayerAsync,
@@ -48,6 +49,7 @@ import { OBJECTS_SIDEBAR_OPEN_Z_LAYER_EVENT } from 'utils/objects-sidebar';
 
 interface StateToProps {
     jobInstance: any;
+    canvasInstance: any;
     frameNumber: any;
     statesHidden: boolean;
     statesLocked: boolean;
@@ -76,6 +78,7 @@ interface DispatchToProps {
     updateAnnotations(...args: Parameters<typeof updateAnnotationsAsync>): void;
     collapseStates(...args: Parameters<typeof collapseObjectItems>): void;
     removeObject(...args: Parameters<typeof removeObjectAction>): void;
+    removeObjects(...args: Parameters<typeof removeObjectsAsync>): void;
     copyShape(...args: Parameters<typeof copyShapeAction>): void;
     switchPropagateVisibility(...args: Parameters<typeof switchPropagateVisibilityAction>): void;
     switchSimplifyVisibility(...args: Parameters<typeof switchSimplifyVisibilityAction>): void;
@@ -231,7 +234,7 @@ function mapStateToProps(state: CombinedState): StateToProps {
                 frame: { number: frameNumber },
             },
             canvas: {
-                activeControl, activeObjectHidden,
+                activeControl, activeObjectHidden, instance: canvasInstance,
             },
             editing: { objectState: editedState },
             colors,
@@ -270,6 +273,7 @@ function mapStateToProps(state: CombinedState): StateToProps {
         objectStates,
         frameNumber,
         jobInstance,
+        canvasInstance,
         annotationsFilters,
         renderData,
         colors,
@@ -299,6 +303,9 @@ function mapDispatchToProps(dispatch: any): DispatchToProps {
         },
         removeObject(...args: Parameters<typeof removeObjectAction>): void {
             dispatch(removeObjectAction(...args));
+        },
+        removeObjects(...args: Parameters<typeof removeObjectsAsync>): void {
+            dispatch(removeObjectsAsync(...args));
         },
         copyShape(...args: Parameters<typeof copyShapeAction>): void {
             dispatch(copyShapeAction(...args));
@@ -559,12 +566,14 @@ class ObjectsListContainer extends React.PureComponent<Props, State> {
             updateAnnotations,
             changeGroupColor,
             removeObject,
+            removeObjects,
             copyShape,
             switchPropagateVisibility,
             switchSimplifyVisibility,
             changeFrame,
             workspace,
             renderData,
+            canvasInstance,
         } = this.props;
         const {
             objectStates, sortedStatesID, statesOrdering, filteredStates,
@@ -662,9 +671,23 @@ class ObjectsListContainer extends React.PureComponent<Props, State> {
             },
             DELETE_OBJECT_STANDARD_WORKSPACE: (event?: KeyboardEvent) => {
                 preventDefault(event);
+                const force = event ? event.shiftKey : false;
+
+                // when a multi-selection exists on the canvas, delete the whole group at once
+                // (single undo item); otherwise fall back to deleting the activated object
+                const selected: number[] = canvasInstance?.selectedObjects ?? [];
+                if (selected.length) {
+                    const selectedStates = objectStates
+                        .filter((objectState: ObjectState): boolean => selected.includes(objectState.clientID));
+                    if (selectedStates.length) {
+                        removeObjects(selectedStates, force);
+                        return;
+                    }
+                }
+
                 const state = activatedState(true);
                 if (state) {
-                    removeObject(state, event ? event.shiftKey : false);
+                    removeObject(state, force);
                 }
             },
             CHANGE_OBJECT_COLOR: (event?: KeyboardEvent) => {

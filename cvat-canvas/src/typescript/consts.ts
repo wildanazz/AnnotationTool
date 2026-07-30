@@ -21,6 +21,8 @@ const SNAP_TO_ANGLE_RESIZE_DEFAULT = 0.1;
 const SNAP_TO_ANGLE_RESIZE_SHIFT = 15;
 const MINIMUM_TEXT_FONT_SIZE = 8;
 const SKELETON_RECT_MARGIN = 20;
+// how far a pointer may travel between mousedown and mouseup for the result to be still a click
+const CLICK_MOVEMENT_THRESHOLD = 5;
 
 const DEFAULT_SHAPE_TEXT_SIZE = 12;
 const DEFAULT_SHAPE_TEXT_CONTENT = 'id,label,attributes,source,descriptions';
@@ -53,6 +55,7 @@ export default {
     DEFAULT_UNDEFINED_ATTR_VALUE,
     MINIMUM_TEXT_FONT_SIZE,
     SKELETON_RECT_MARGIN,
+    CLICK_MOVEMENT_THRESHOLD,
     CONFLICT_COLOR,
     WARNING_COLOR,
     SHADED_COLOR,

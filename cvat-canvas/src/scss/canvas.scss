@@ -86,6 +86,13 @@ image.cvat_canvas_shape_selection {
     visibility: hidden;
 }
 
+// a bounding box included into the multi-selection (ctrl + click), such boxes are dragged together
+// stroke-width is not touched here, it is kept in sync with the current zoom level in canvasView
+.cvat_canvas_shape_selected {
+    stroke: #40a9ff;
+    stroke-dasharray: 6 3;
+}
+
 .cvat_canvas_selection_box {
     fill: white;
     fill-opacity: 0.1;

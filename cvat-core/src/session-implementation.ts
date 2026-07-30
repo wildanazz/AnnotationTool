@@ -487,6 +487,28 @@ export function implementJob(Job: typeof JobClass): typeof JobClass {
         },
     });
 
+    Object.defineProperty(Job.prototype.annotations.translate, 'implementation', {
+        value: function translateImplementation(
+            this: JobClass,
+            frame: Parameters<typeof JobClass.prototype.annotations.translate>[0],
+            objectStates: Parameters<typeof JobClass.prototype.annotations.translate>[1],
+            offset: Parameters<typeof JobClass.prototype.annotations.translate>[2],
+        ): ReturnType<typeof JobClass.prototype.annotations.translate> {
+            return Promise.resolve(getCollection(this).translate(frame, objectStates, offset));
+        },
+    });
+
+    Object.defineProperty(Job.prototype.annotations.deleteObjects, 'implementation', {
+        value: function deleteObjectsImplementation(
+            this: JobClass,
+            frame: Parameters<typeof JobClass.prototype.annotations.deleteObjects>[0],
+            objectStates: Parameters<typeof JobClass.prototype.annotations.deleteObjects>[1],
+            force: Parameters<typeof JobClass.prototype.annotations.deleteObjects>[2],
+        ): ReturnType<typeof JobClass.prototype.annotations.deleteObjects> {
+            return Promise.resolve(getCollection(this).deleteObjects(frame, objectStates, force));
+        },
+    });
+
     Object.defineProperty(Job.prototype.annotations.hasUnsavedChanges, 'implementation', {
         value: function hasUnsavedChangesImplementation(
             this: JobClass,
@@ -1283,6 +1305,28 @@ export function implementTask(Task: typeof TaskClass): typeof TaskClass {
             frame: Parameters<typeof TaskClass.prototype.annotations.compactLayers>[0],
         ): ReturnType<typeof TaskClass.prototype.annotations.compactLayers> {
             return Promise.resolve(getCollection(this).compactLayers(frame));
+        },
+    });
+
+    Object.defineProperty(Task.prototype.annotations.translate, 'implementation', {
+        value: function translateImplementation(
+            this: TaskClass,
+            frame: Parameters<typeof TaskClass.prototype.annotations.translate>[0],
+            objectStates: Parameters<typeof TaskClass.prototype.annotations.translate>[1],
+            offset: Parameters<typeof TaskClass.prototype.annotations.translate>[2],
+        ): ReturnType<typeof TaskClass.prototype.annotations.translate> {
+            return Promise.resolve(getCollection(this).translate(frame, objectStates, offset));
+        },
+    });
+
+    Object.defineProperty(Task.prototype.annotations.deleteObjects, 'implementation', {
+        value: function deleteObjectsImplementation(
+            this: TaskClass,
+            frame: Parameters<typeof TaskClass.prototype.annotations.deleteObjects>[0],
+            objectStates: Parameters<typeof TaskClass.prototype.annotations.deleteObjects>[1],
+            force: Parameters<typeof TaskClass.prototype.annotations.deleteObjects>[2],
+        ): ReturnType<typeof TaskClass.prototype.annotations.deleteObjects> {
+            return Promise.resolve(getCollection(this).deleteObjects(frame, objectStates, force));
         },
     });
 

@@ -50,6 +50,17 @@ export interface CanvasView {
     translateFromSVG(points: number[]): number[];
 }
 
+// A selected shape that is dragged along with the shape a user actually grabbed.
+// Position and rotation are remembered when a drag starts to apply the same offset on every move
+interface GroupDragCompanion {
+    state: any;
+    shape: SVG.Shape;
+    text: SVG.Text | null;
+    rotation: number;
+    x: number;
+    y: number;
+}
+
 export class CanvasViewImpl implements CanvasView, Listener {
     private text: SVGSVGElement;
     private adoptedText: SVG.Container;
@@ -92,6 +103,7 @@ export class CanvasViewImpl implements CanvasView, Listener {
     private draggableShape: SVG.Shape | null;
     private resizableShape: SVG.Shape | null;
     private ctrlPressed: boolean;
+    private lastMouseDownPosition: { x: number; y: number } | null;
     private innerObjectsFlags: {
         drawHidden: Record<number, boolean>;
         editHidden: Record<number, boolean>;
@@ -311,6 +323,80 @@ export class CanvasViewImpl implements CanvasView, Listener {
         }
     }
 
+    // Multi-selection ("select a bunch of bounding boxes and move them as a group")
+    // The selection itself is stored in the canvas model, the view only reflects it
+    // and uses it to drag every selected box together with the dragged one
+    private updateSelectionAppearance(): void {
+        const { selectedElements } = this.controller;
+
+        Array.from(this.content.getElementsByClassName('cvat_canvas_shape_selected'))
+            .forEach((node: Element): void => {
+                if (!selectedElements.includes(+node.getAttribute('clientID'))) {
+                    node.classList.remove('cvat_canvas_shape_selected');
+                }
+            });
+
+        for (const clientID of selectedElements) {
+            const shape = this.svgShapes[clientID];
+            if (shape) {
+                shape.addClass('cvat_canvas_shape_selected');
+            }
+        }
+    }
+
+    private toggleSelectedElement(clientID: number): void {
+        const { selectedElements } = this.controller;
+        this.controller.selectObjects(
+            selectedElements.includes(clientID) ?
+                selectedElements.filter((_clientID: number): boolean => _clientID !== clientID) :
+                [...selectedElements, clientID],
+        );
+
+        this.dispatchSelectedEvent();
+    }
+
+    private dispatchSelectedEvent(): void {
+        const { selectedElements } = this.controller;
+        this.canvas.dispatchEvent(
+            new CustomEvent('canvas.selected', {
+                bubbles: false,
+                cancelable: true,
+                detail: {
+                    states: this.controller.objects
+                        .filter((state: any): boolean => selectedElements.includes(state.clientID)),
+                },
+            }),
+        );
+    }
+
+    // Collects everything that must be moved together with the shape a user has grabbed.
+    // Returns an empty list when the grabbed shape is not a part of a multi-selection
+    private prepareGroupDrag(anchorClientID: number): GroupDragCompanion[] {
+        const { selectedElements } = this.controller;
+        if (selectedElements.length < 2 || !selectedElements.includes(anchorClientID)) {
+            return [];
+        }
+
+        return selectedElements.reduce((acc: GroupDragCompanion[], clientID: number): GroupDragCompanion[] => {
+            const shape = this.svgShapes[clientID];
+            const [state] = this.controller.objects
+                .filter((_state: any): boolean => _state.clientID === clientID);
+
+            if (clientID !== anchorClientID && shape && state) {
+                acc.push({
+                    state,
+                    shape,
+                    text: this.svgTexts[clientID] ?? null,
+                    rotation: shape.transform().rotation || 0,
+                    x: shape.x(),
+                    y: shape.y(),
+                });
+            }
+
+            return acc;
+        }, []);
+    }
+
     private onInteraction = (
         shapes: InteractionResult[] | null,
         finished = false,
@@ -462,6 +548,36 @@ export class CanvasViewImpl implements CanvasView, Listener {
         for (const clientID of Object.keys(this.innerObjectsFlags.editHidden)) {
             this.setupInnerFlags(+clientID, 'editHidden', false);
         }
+    };
+
+    // Reports a finished group drag as a single event, so that all the moved boxes
+    // are updated (and undone) together, instead of one request/history item per box.
+    // The move is a plain translation, so the offset is enough to describe it
+    private onGroupEditDone = (states: any[], offset: { x: number; y: number }, duration: number): void => {
+        this.canvas.style.cursor = '';
+        this.mode = Mode.IDLE;
+
+        for (const state of states) {
+            // see the comment in onEditDone: this is how canvas marks a view
+            // as the one that must be redrawn during the next objects setup.
+            // the drawn state may be gone if the object was removed by a concurrent update mid-drag
+            if (this.drawnStates[state.clientID]) {
+                this.drawnStates[state.clientID].updated = 0;
+                this.drawnStates[state.clientID].points = [];
+            }
+        }
+
+        this.canvas.dispatchEvent(
+            new CustomEvent('canvas.dragshapes', {
+                bubbles: false,
+                cancelable: true,
+                detail: {
+                    states,
+                    offset,
+                    duration,
+                },
+            }),
+        );
     };
 
     private onMergeDone = (objects: any[] | null, duration?: number): void => {
@@ -1029,6 +1145,8 @@ export class CanvasViewImpl implements CanvasView, Listener {
                 }
             }
 
+            // shapes are recreated during setup, the multi-selection appearance must be restored
+            this.updateSelectionAppearance();
             this.autoborderHandler.updateObjects();
         }
     }
@@ -1310,14 +1428,37 @@ export class CanvasViewImpl implements CanvasView, Listener {
             });
 
             let startCenter = null;
+            let companions: GroupDragCompanion[] = [];
+            let startPosition = null;
             draggableInstance.on('dragstart', (): void => {
                 onDragStart();
                 this.draggableShape = shape;
                 const { cx, cy } = shape.bbox();
                 startCenter = { x: cx, y: cy };
                 start = Date.now();
+
+                companions = this.prepareGroupDrag(state.clientID);
+                if (companions.length) {
+                    startPosition = { x: shape.x(), y: shape.y() };
+                    // texts are restored when the drag is over, their position is not updated on every move
+                    companions.forEach(({ text }: GroupDragCompanion): void => {
+                        text?.addClass('cvat_canvas_hidden');
+                    });
+                }
             }).on('dragmove', (e: CustomEvent): void => {
                 onDragMove();
+                if (companions.length) {
+                    const dx = shape.x() - startPosition.x;
+                    const dy = shape.y() - startPosition.y;
+                    companions.forEach((companion: GroupDragCompanion): void => {
+                        // rotation must be dropped before moving, otherwise the shape
+                        // keeps being rotated around its initial center
+                        companion.shape.rotate(0);
+                        companion.shape.move(companion.x + dx, companion.y + dy);
+                        companion.shape.rotate(companion.rotation);
+                    });
+                }
+
                 if (state.shapeType === 'skeleton' && e.target) {
                     const { instance } = e.target as any;
                     const [x, y] = [instance.x(), instance.y()];
@@ -1343,10 +1484,27 @@ export class CanvasViewImpl implements CanvasView, Listener {
                     setupSkeletonEdges(shape as SVG.G, skeletonSVGTemplate);
                 }
             }).on('dragend', (): void => {
+                const groupCompanions = companions;
+                companions = [];
+                const showCompanionTexts = (): void => {
+                    groupCompanions.forEach(({ text }: GroupDragCompanion): void => {
+                        if (text) {
+                            text.removeClass('cvat_canvas_hidden');
+                            this.updateTextPosition(text);
+                        }
+                    });
+                };
+
                 if (aborted) {
                     this.resetViewPosition(state.clientID);
+                    groupCompanions.forEach((companion: GroupDragCompanion): void => {
+                        this.resetViewPosition(companion.state.clientID);
+                    });
+                    showCompanionTexts();
                     return;
                 }
+
+                showCompanionTexts();
 
                 onDragEnd();
                 this.draggableShape = null;
@@ -1355,6 +1513,20 @@ export class CanvasViewImpl implements CanvasView, Listener {
                 const dx2 = (startCenter.x - cx) ** 2;
                 const dy2 = (startCenter.y - cy) ** 2;
                 if (Math.sqrt(dx2 + dy2) > 0) {
+                    if (groupCompanions.length) {
+                        const movedStates = [state, ...groupCompanions
+                            .map((companion: GroupDragCompanion): any => companion.state)];
+                        // every box of the selection was shifted by the very same offset,
+                        // canvas and image coordinate systems differ by a constant, so the offset is the same in both
+                        const offset = {
+                            x: shape.x() - startPosition.x,
+                            y: shape.y() - startPosition.y,
+                        };
+
+                        this.onGroupEditDone(movedStates, offset, Date.now() - start);
+                        return;
+                    }
+
                     if (state.shapeType === 'mask') {
                         const { points } = state;
                         const x = Math.trunc(shape.x()) - this.geometry.offset;
@@ -1708,6 +1880,7 @@ export class CanvasViewImpl implements CanvasView, Listener {
         this.mode = Mode.IDLE;
         this.snapToAngleResize = consts.SNAP_TO_ANGLE_RESIZE_DEFAULT;
         this.ctrlPressed = false;
+        this.lastMouseDownPosition = null;
         this.innerObjectsFlags = {
             drawHidden: {},
             editHidden: {},
@@ -1883,6 +2056,7 @@ export class CanvasViewImpl implements CanvasView, Listener {
         });
 
         this.canvas.addEventListener('mousedown', (event): void => {
+            this.lastMouseDownPosition = { x: event.clientX, y: event.clientY };
             if ([0, 1].includes(event.button)) {
                 if (
                     [Mode.IDLE, Mode.DRAG_CANVAS, Mode.MERGE, Mode.SPLIT]
@@ -1891,6 +2065,29 @@ export class CanvasViewImpl implements CanvasView, Listener {
                     this.controller.enableDrag(event.clientX, event.clientY);
                 }
             }
+        });
+
+        this.canvas.addEventListener('click', (event: MouseEvent): void => {
+            // a plain click somewhere aside of objects resets the multi-selection
+            // clicks that finish a canvas panning are ignored, they are not meant to reset anything
+            if (event.ctrlKey || event.altKey || event.shiftKey || this.mode !== Mode.IDLE) return;
+            if (!this.controller.selectedElements.length) return;
+
+            // clicks on objects themselves and on their resize/rotation handles are not "aside"
+            const target = event.target as Element;
+            if (target?.closest?.('.cvat_canvas_shape, [class*="svg_select"]')) return;
+
+            const { lastMouseDownPosition: position } = this;
+            if (position) {
+                const distance = Math.sqrt(
+                    (event.clientX - position.x) ** 2 + (event.clientY - position.y) ** 2,
+                );
+
+                if (distance > consts.CLICK_MOVEMENT_THRESHOLD) return;
+            }
+
+            this.controller.selectObjects([]);
+            this.dispatchSelectedEvent();
         });
 
         window.document.addEventListener('mouseup', this.onMouseUp);
@@ -2187,6 +2384,8 @@ export class CanvasViewImpl implements CanvasView, Listener {
             this.activate(this.controller.activeElement);
         } else if (reason === UpdateReasons.SHAPE_HIGHLIGHTED) {
             this.highlight(this.controller.highlightedElements);
+        } else if (reason === UpdateReasons.SHAPES_SELECTED) {
+            this.updateSelectionAppearance();
         } else if (reason === UpdateReasons.SELECT_REGION) {
             if (this.mode === Mode.SELECT_REGION) {
                 this.regionSelector.select(true);
@@ -2380,6 +2579,8 @@ export class CanvasViewImpl implements CanvasView, Listener {
                 );
             }
             this.canvas.style.cursor = '';
+            // cancel() resets the model to its default data, the multi-selection is dropped as well
+            this.updateSelectionAppearance();
             this.dispatchCanceledEvent();
         } else if (reason === UpdateReasons.DATA_FAILED) {
             this.onError(model.exception, 'data fetching');
@@ -2834,7 +3035,14 @@ export class CanvasViewImpl implements CanvasView, Listener {
                 }
             }
 
-            this.svgShapes[state.clientID].on('click.canvas', (): void => {
+            this.svgShapes[state.clientID].on('click.canvas', (e: MouseEvent): void => {
+                if (e.ctrlKey && this.mode === Mode.IDLE) {
+                    // ctrl + click adds/removes a bounding box to/from the multi-selection
+                    e.stopPropagation();
+                    this.toggleSelectedElement(state.clientID);
+                    return;
+                }
+
                 this.canvas.dispatchEvent(
                     new CustomEvent('canvas.clicked', {
                         bubbles: false,

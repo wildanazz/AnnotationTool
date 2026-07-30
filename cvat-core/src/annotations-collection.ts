@@ -157,21 +157,26 @@ export default class Collection {
         };
     }
 
+    // A track keyframe holds the whole shape, so restoring it restores every field at once
+    private _captureKeyframeRestore(object: Track, frame: number): () => void {
+        const wasKeyframe = frame in object.shapes;
+        const shape = wasKeyframe ? object.shapes[frame] : undefined;
+        const { source } = object;
+
+        return (): void => {
+            object.source = source;
+            object.updated = Date.now();
+            if (shape) {
+                object.shapes[frame] = shape;
+            } else {
+                delete object.shapes[frame];
+            }
+        };
+    }
+
     private _captureZOrderRestore(object: Shape | Track, frame: number): () => void {
         if (object instanceof Track) {
-            const wasKeyframe = frame in object.shapes;
-            const shape = wasKeyframe ? object.shapes[frame] : undefined;
-            const { source } = object;
-
-            return (): void => {
-                object.source = source;
-                object.updated = Date.now();
-                if (shape) {
-                    object.shapes[frame] = shape;
-                } else {
-                    delete object.shapes[frame];
-                }
-            };
+            return this._captureKeyframeRestore(object, frame);
         }
 
         const { zOrder, source } = object;
@@ -179,6 +184,19 @@ export default class Collection {
             object.source = source;
             object.updated = Date.now();
             object.zOrder = zOrder;
+        };
+    }
+
+    private _capturePointsRestore(object: Shape | Track, frame: number): () => void {
+        if (object instanceof Track) {
+            return this._captureKeyframeRestore(object, frame);
+        }
+
+        const { points, source } = object;
+        return (): void => {
+            object.source = source;
+            object.updated = Date.now();
+            object.points = points;
         };
     }
 
@@ -1569,6 +1587,199 @@ export default class Collection {
         });
 
         return this._applyZOrderUpdates(frame, zOrders);
+    }
+
+    // Shifts a bunch of shapes by the same offset, e.g. when several bounding boxes
+    // selected on the canvas are dragged together. The whole move is one undo/redo item
+    public translate(frame: number, objectStates: ObjectState[], offset: { x: number; y: number }): ObjectState[] {
+        checkObjectType('frame', frame, 'integer', null);
+        checkObjectType('object states', objectStates, null, { cls: Array, name: 'Array' });
+        checkObjectType('offset', offset, null, { cls: Object, name: 'Object' });
+        checkObjectType('offset x', offset.x, 'number', null);
+        checkObjectType('offset y', offset.y, 'number', null);
+
+        objectStates.forEach((state) => {
+            checkObjectType('object state', state, null, { cls: ObjectState, name: 'ObjectState' });
+            if (state.frame !== frame) {
+                throw new ArgumentError('Object state frame must match the requested frame');
+            }
+
+            // points of these shape types are not a plain list of coordinates,
+            // shifting them requires more than adding the offset to every pair
+            if ([ShapeType.MASK, ShapeType.SKELETON].includes(state.shapeType)) {
+                throw new ArgumentError(`Objects of type "${state.shapeType}" can not be translated`);
+            }
+        });
+
+        if (!offset.x && !offset.y) {
+            return [];
+        }
+
+        const updatedStates: ObjectState[] = [];
+        const snapshots: {
+            clientID: number;
+            undo: () => void;
+            redo: () => void;
+        }[] = [];
+
+        // Resolve the eligible objects and their current geometry up front, before any mutation.
+        // Objects which cannot be moved (removed, locked, not interpolatable on this frame) are skipped.
+        const movable: { object: Shape | Track; currentState: ObjectState }[] = [];
+        for (const objectState of objectStates) {
+            const object = this.objects[objectState.clientID];
+            if (!(object instanceof Shape || object instanceof Track) || object.removed || object.lock) {
+                continue;
+            }
+
+            try {
+                movable.push({ object, currentState: new ObjectState(object.get(frame)) });
+            } catch (error: unknown) {
+                if (error instanceof InterpolationNotPossibleError) {
+                    continue;
+                }
+                throw error;
+            }
+        }
+
+        if (!movable.length) {
+            return [];
+        }
+
+        // Clamp the offset so that the group as a whole stays within the frame.
+        // Without this each shape is fitted to the frame independently on save (see Drawn.fitPoints),
+        // which would deform boxes crossing the border and tear the group apart. Clamping the shared
+        // offset instead keeps every box rigid and preserves their relative positions.
+        let appliedOffset = offset;
+        const frameInfo = this.injection.framesInfo[frame];
+        if (frameInfo && frameInfo.width && frameInfo.height) {
+            let minX = Number.MAX_SAFE_INTEGER;
+            let minY = Number.MAX_SAFE_INTEGER;
+            let maxX = Number.MIN_SAFE_INTEGER;
+            let maxY = Number.MIN_SAFE_INTEGER;
+            for (const { currentState } of movable) {
+                const { points } = currentState;
+                for (let i = 0; i < points.length - 1; i += 2) {
+                    minX = Math.min(minX, points[i]);
+                    maxX = Math.max(maxX, points[i]);
+                    minY = Math.min(minY, points[i + 1]);
+                    maxY = Math.max(maxY, points[i + 1]);
+                }
+            }
+
+            // Math.min(Math.max(...)) rather than a clamp helper: when the union is wider than the
+            // frame (lower bound above upper bound) this biases the group to the top-left corner
+            // instead of throwing, which is a safe, if imperfect, fallback for that corner case.
+            appliedOffset = {
+                x: Math.min(Math.max(offset.x, -minX), frameInfo.width - maxX),
+                y: Math.min(Math.max(offset.y, -minY), frameInfo.height - maxY),
+            };
+
+            if (!appliedOffset.x && !appliedOffset.y) {
+                return [];
+            }
+        }
+
+        // Prevent each individual object.save() from creating its own history item.
+        this.history.freeze(true);
+
+        try {
+            for (const { object, currentState } of movable) {
+                const undo = this._capturePointsRestore(object, frame);
+                currentState.points = currentState.points.map((coordinate: number, index: number): number => (
+                    coordinate + (index % 2 ? appliedOffset.y : appliedOffset.x)
+                ));
+                object.save(frame, currentState);
+                const redo = this._capturePointsRestore(object, frame);
+
+                snapshots.push({ clientID: object.clientID, undo, redo });
+                updatedStates.push(new ObjectState(object.get(frame)));
+            }
+        } catch (error: unknown) {
+            snapshots.forEach(({ undo }) => undo());
+            throw error;
+        } finally {
+            this.history.freeze(false);
+        }
+
+        if (snapshots.length) {
+            // Store the whole move as one undo/redo item after all objects are updated.
+            this.history.do(
+                HistoryActions.CHANGED_POINTS,
+                () => {
+                    snapshots.forEach(({ undo }) => undo());
+                },
+                () => {
+                    snapshots.forEach(({ redo }) => redo());
+                },
+                snapshots.map(({ clientID }) => clientID),
+                frame,
+            );
+        }
+
+        return updatedStates;
+    }
+
+    // Removes a bunch of objects in one shot, e.g. a multi-selection of bounding boxes deleted
+    // together from the canvas. The whole removal is a single undo/redo item. Locked objects are
+    // skipped unless force is set. Returns the clientIDs actually removed.
+    public deleteObjects(frame: number, objectStates: ObjectState[], force = false): number[] {
+        checkObjectType('frame', frame, 'integer', null);
+        checkObjectType('object states', objectStates, null, { cls: Array, name: 'Array' });
+        objectStates.forEach((state) => {
+            checkObjectType('object state', state, null, { cls: ObjectState, name: 'ObjectState' });
+        });
+
+        const snapshots: {
+            clientID: number;
+            undo: () => void;
+            redo: () => void;
+        }[] = [];
+
+        // Prevent each individual removal from creating its own history item.
+        this.history.freeze(true);
+        try {
+            for (const objectState of objectStates) {
+                const object = this.objects[objectState.clientID];
+                if (!object || object.removed || (object.lock && !force)) {
+                    continue;
+                }
+
+                object.removed = true;
+                snapshots.push({
+                    clientID: object.clientID,
+                    undo: (): void => {
+                        object.removed = false;
+                        object.updated = Date.now();
+                    },
+                    redo: (): void => {
+                        object.removed = true;
+                        object.updated = Date.now();
+                    },
+                });
+            }
+        } catch (error: unknown) {
+            snapshots.forEach(({ undo }) => undo());
+            throw error;
+        } finally {
+            this.history.freeze(false);
+        }
+
+        if (snapshots.length) {
+            // Store the whole removal as one undo/redo item after all objects are removed.
+            this.history.do(
+                HistoryActions.REMOVED_OBJECT,
+                () => {
+                    snapshots.forEach(({ undo }) => undo());
+                },
+                () => {
+                    snapshots.forEach(({ redo }) => redo());
+                },
+                snapshots.map(({ clientID }) => clientID),
+                frame,
+            );
+        }
+
+        return snapshots.map(({ clientID }) => clientID);
     }
 
     public select(objectStates: ObjectState[], x: number, y: number): {

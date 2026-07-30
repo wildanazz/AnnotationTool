@@ -200,6 +200,28 @@ function buildDuplicatedAPI(prototype): void {
                     return result;
                 },
 
+                async translate(frame, objectStates, offset) {
+                    const result = await PluginRegistry.apiWrapper.call(
+                        this,
+                        prototype.annotations.translate,
+                        frame,
+                        objectStates,
+                        offset,
+                    );
+                    return result;
+                },
+
+                async deleteObjects(frame, objectStates, force) {
+                    const result = await PluginRegistry.apiWrapper.call(
+                        this,
+                        prototype.annotations.deleteObjects,
+                        frame,
+                        objectStates,
+                        force,
+                    );
+                    return result;
+                },
+
                 async import(data) {
                     const result = await PluginRegistry.apiWrapper.call(this, prototype.annotations.import, data);
                     return result;
@@ -406,6 +428,16 @@ export class Session {
             objectStates: ObjectState[],
         ) => Promise<ObjectState[]>;
         compactLayers: (frame: number) => Promise<ObjectState[]>;
+        translate: (
+            frame: number,
+            objectStates: ObjectState[],
+            offset: { x: number, y: number },
+        ) => Promise<ObjectState[]>;
+        deleteObjects: (
+            frame: number,
+            objectStates: ObjectState[],
+            force?: boolean,
+        ) => Promise<number[]>;
         clear: (options?: {
             reload?: boolean;
             from?: number;
@@ -524,6 +556,8 @@ export class Session {
             slice: Object.getPrototypeOf(this).annotations.slice.bind(this),
             updateLayer: Object.getPrototypeOf(this).annotations.updateLayer.bind(this),
             compactLayers: Object.getPrototypeOf(this).annotations.compactLayers.bind(this),
+            translate: Object.getPrototypeOf(this).annotations.translate.bind(this),
+            deleteObjects: Object.getPrototypeOf(this).annotations.deleteObjects.bind(this),
             clear: Object.getPrototypeOf(this).annotations.clear.bind(this),
             search: Object.getPrototypeOf(this).annotations.search.bind(this),
             upload: Object.getPrototypeOf(this).annotations.upload.bind(this),

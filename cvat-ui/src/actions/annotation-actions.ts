@@ -594,6 +594,33 @@ export function removeObject(objectState: any, force: boolean): AnyAction {
     };
 }
 
+// Removes several objects at once (e.g. a multi-selection of bounding boxes on the canvas).
+// The whole removal is a single item in the annotations history, so one undo brings them all back.
+export function removeObjectsAsync(objectStates: ObjectState[], force: boolean): ThunkAction {
+    return async (dispatch: ThunkDispatch): Promise<void> => {
+        try {
+            const { frame, jobInstance } = receiveAnnotationsParameters();
+            const removedIDs = await jobInstance.annotations.deleteObjects(frame, objectStates, force);
+            if (!removedIDs.length) {
+                return;
+            }
+
+            await jobInstance.logger.log(EventScope.deleteObject, { count: removedIDs.length });
+            // drop any activation so it can not point at a now-removed object, then reload the
+            // frame so both the store and the canvas reflect the removals
+            dispatch(activateObject(null, null, null));
+            dispatch(fetchAnnotationsAsync());
+        } catch (error) {
+            dispatch({
+                type: AnnotationActionTypes.REMOVE_OBJECT_FAILED,
+                payload: {
+                    error,
+                },
+            });
+        }
+    };
+}
+
 export function copyShape(objectState: any): AnyAction {
     const job = getStore().getState().annotation.job.instance;
     job?.logger.log(EventScope.copyObject, { count: 1 });
@@ -1281,6 +1308,46 @@ export function updateLayerAsync(
             dispatch,
             (jobInstance) => jobInstance.annotations.updateLayer(frame, placement, statesToMove),
         );
+    };
+}
+
+// Shifts several objects by the same offset, e.g. when a bunch of bounding boxes
+// selected on the canvas is dragged. The move is a single item in the annotations history
+export function translateAnnotationsAsync(
+    frame: number,
+    statesToTranslate: ObjectState[],
+    offset: { x: number; y: number },
+): ThunkAction {
+    return async (dispatch: ThunkDispatch): Promise<void> => {
+        const { jobInstance, workspace } = receiveAnnotationsParameters();
+        try {
+            const statesToSave = statesToTranslate.filter((objectState) => !objectState.isGroundTruth);
+            if (!statesToSave.length) {
+                return;
+            }
+
+            // The canvas optimistically leaves the dragged shapes at their new position and marks
+            // their views dirty, expecting an annotations update to redraw them. If the core moved
+            // nothing (e.g. the group was already against the frame border), we still have to
+            // dispatch the unchanged states, otherwise those dirty views never get reconciled and
+            // the boxes visually stick to the dragged position until the next unrelated redraw.
+            let states = await jobInstance.annotations.translate(frame, statesToSave, offset);
+            if (!states.length) {
+                states = statesToSave;
+            }
+
+            if (workspace === Workspace.REVIEW) {
+                states = lockStatesForReviewWorkspace(states);
+            }
+
+            dispatchAnnotationsUpdate(dispatch, states, await jobInstance.actions.get());
+        } catch (error) {
+            dispatch({
+                type: AnnotationActionTypes.UPDATE_ANNOTATIONS_FAILED,
+                payload: { error },
+            });
+            dispatch(fetchAnnotationsAsync());
+        }
     };
 }
 
